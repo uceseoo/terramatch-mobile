@@ -8,13 +8,17 @@ import {
   StyleSheet,
 } from 'react-native';
 import Svg, { Path, Circle } from 'react-native-svg';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { colors } from '../constants/colors';
 import { useAuth } from '../context/AuthContext';
 import { getDatabase } from '../database/db';
 import { LANDSCAPE_FILTERS, type LandscapeFilter } from '../constants/landscapes';
 import Logo from '../components/Logo';
 import Card from '../components/Card';
-import type { Project } from '../types';
+import type { Project, RootStackParamList } from '../types';
+
+type Nav = NativeStackNavigationProp<RootStackParamList, 'Home'>;
 
 // ─── Icons ───
 function SearchIcon() {
@@ -108,6 +112,7 @@ interface ProjectWithCount extends Project {
 }
 
 export default function HomeScreen() {
+  const navigation = useNavigation<Nav>();
   const { user, logout } = useAuth();
   const [search, setSearch] = useState('');
   const [landscapeFilter, setLandscapeFilter] = useState<LandscapeFilter>('all');
@@ -292,9 +297,7 @@ export default function HomeScreen() {
           visibleProjects.map((project) => (
             <Card
               key={project.id}
-              onPress={() => {
-                // Sprint 2: navigate to project detail
-              }}
+              onPress={() => navigation.navigate('Project', { projectId: project.id })}
             >
               <Text style={styles.projectName}>{project.name}</Text>
               <View style={styles.projectMeta}>
