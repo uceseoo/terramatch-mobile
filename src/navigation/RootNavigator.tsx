@@ -7,6 +7,10 @@ import { colors } from '../constants/colors';
 
 import LoginScreen from '../screens/LoginScreen';
 import HomeScreen from '../screens/HomeScreen';
+import ProjectScreen from '../screens/ProjectScreen';
+import SiteScreen from '../screens/SiteScreen';
+import PolygonDetailScreen from '../screens/PolygonDetailScreen';
+import EditPolygonScreen from '../screens/EditPolygonScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -14,7 +18,7 @@ export default function RootNavigator() {
   const { user, isLoading } = useAuth();
 
   if (isLoading) {
-    return null; // Could add a splash screen here later
+    return null;
   }
 
   return (
@@ -29,7 +33,10 @@ export default function RootNavigator() {
         {user ? (
           <>
             <Stack.Screen name="Home" component={HomeScreen} />
-            {/* Sprint 2+ screens will be added here */}
+            <Stack.Screen name="Project" component={ProjectScreen} />
+            <Stack.Screen name="Site" component={SiteScreen} />
+            <Stack.Screen name="PolygonDetail" component={PolygonDetailScreen} />
+            <Stack.Screen name="EditPolygon" component={EditPolygonScreen} />
           </>
         ) : (
           <Stack.Screen
