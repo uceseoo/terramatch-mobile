@@ -224,7 +224,7 @@ export default function CollectPointScreen() {
         )}
 
         {/* Actions */}
-        {saved ? null : !captured ? (
+        {!saved && !captured && (
           <Button
             variant="primary"
             onPress={handleCapture}
@@ -236,7 +236,8 @@ export default function CollectPointScreen() {
               {loading ? 'Getting Location...' : 'Capture Point'}
             </Text>
           </Button>
-        ) : (
+        )}
+        {!saved && captured && (
           <View style={styles.capturedActions}>
             <Button onPress={handleCapture} style={{ flex: 1 }}>
               <RefreshIcon />
@@ -254,7 +255,7 @@ export default function CollectPointScreen() {
               </Text>
             </Button>
           </View>
-        ) : null}
+        )}
       </View>
     </View>
   );
