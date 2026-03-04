@@ -21,6 +21,7 @@ export default function CollectPointScreen() {
   const [location, setLocation] = useState<GPSPoint | null>(null);
   const [loading, setLoading] = useState(false);
   const [captured, setCaptured] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -78,9 +79,13 @@ export default function CollectPointScreen() {
         ]
       );
 
+      // Show inline saved state immediately
+      setSaved(true);
+
+      // Also show alert with option to go back
       Alert.alert(
         'Point Saved',
-        `GPS point captured at ${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`,
+        `GPS point saved at ${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`,
         [{ text: 'OK', onPress: () => navigation.goBack() }]
       );
     } catch {
@@ -205,8 +210,21 @@ export default function CollectPointScreen() {
           </View>
         )}
 
+        {/* Saved confirmation banner */}
+        {saved && (
+          <View style={styles.savedBanner}>
+            <View style={styles.savedBannerContent}>
+              <SavedCheckIcon />
+              <Text style={styles.savedText}>Point saved successfully!</Text>
+            </View>
+            <Button variant="primary" onPress={() => navigation.goBack()} style={styles.doneBtn}>
+              <Text style={styles.primaryBtnText}>Done</Text>
+            </Button>
+          </View>
+        )}
+
         {/* Actions */}
-        {!captured ? (
+        {saved ? null : !captured ? (
           <Button
             variant="primary"
             onPress={handleCapture}
@@ -236,13 +254,22 @@ export default function CollectPointScreen() {
               </Text>
             </Button>
           </View>
-        )}
+        ) : null}
       </View>
     </View>
   );
 }
 
 // ─── Icons ───
+
+function SavedCheckIcon() {
+  return (
+    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+      <Path d="M22 11.08V12a10 10 0 11-5.93-9.14" stroke={colors.ok} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M22 4L12 14.01l-3-3" stroke={colors.ok} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
 
 function CaptureIcon() {
   return (
@@ -362,6 +389,30 @@ const styles = StyleSheet.create({
     color: colors.text1,
     minHeight: 60,
     textAlignVertical: 'top',
+  },
+  // Saved banner
+  savedBanner: {
+    backgroundColor: 'rgba(34,197,94,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(34,197,94,0.3)',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 14,
+    alignItems: 'center',
+    gap: 10,
+  },
+  savedBannerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  savedText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.ok,
+  },
+  doneBtn: {
+    width: '100%',
   },
   // Actions
   actionBtn: {

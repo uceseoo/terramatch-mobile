@@ -142,9 +142,13 @@ export default function TrackPolygonScreen() {
     subscriptionRef.current = null;
 
     if (points.length < 3) {
-      Alert.alert('Not Enough Points', 'At least 3 GPS points are needed to form a polygon. Keep walking!');
-      setState('tracking');
-      handleResume();
+      Alert.alert(
+        'Not Enough Points',
+        `Only ${points.length} GPS point(s) recorded. At least 3 are needed to form a polygon. Try walking further or checking GPS signal.`,
+        [{ text: 'OK' }]
+      );
+      // Go back to paused instead of auto-resuming — let user decide
+      setState(points.length > 0 ? 'paused' : 'idle');
       return;
     }
 
@@ -235,15 +239,24 @@ export default function TrackPolygonScreen() {
         subtitle={state === 'complete' ? 'Save your polygon' : 'Walk the boundary'}
         onBack={() => {
           if (state === 'tracking' || state === 'paused') {
+            // Use 2-button alert for web compatibility (web only supports OK/Cancel)
             Alert.alert('Stop Tracking?', 'Your recorded path will be lost.', [
               { text: 'Cancel', style: 'cancel' },
               {
-                text: 'Stop',
-                style: 'destructive',
+                text: 'Discard & Go Back',
                 onPress: () => {
                   subscriptionRef.current?.remove();
+                  if (timerRef.current) clearInterval(timerRef.current);
                   navigation.goBack();
                 },
+              },
+            ]);
+          } else if (state === 'complete') {
+            Alert.alert('Discard Polygon?', 'Your tracked polygon has not been saved.', [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Discard',
+                onPress: () => navigation.goBack(),
               },
             ]);
           } else {
@@ -343,6 +356,15 @@ export default function TrackPolygonScreen() {
             <Text style={styles.statLabel}>Elevation</Text>
           </View>
         </View>
+
+        {/* GPS quality hint */}
+        {state === 'tracking' && points.length === 0 && elapsed > 5 && (
+          <View style={styles.hintBanner}>
+            <Text style={styles.hintText}>
+              Waiting for GPS signal... If indoors, try moving near a window or going outside.
+            </Text>
+          </View>
+        )}
 
         {/* Area display when 3+ points */}
         {points.length >= 3 && (
@@ -570,6 +592,21 @@ const styles = StyleSheet.create({
   statDivider: {
     width: 1,
     backgroundColor: colors.border,
+  },
+  // Hint
+  hintBanner: {
+    backgroundColor: colors.amberBg,
+    borderWidth: 1,
+    borderColor: colors.amber,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 14,
+  },
+  hintText: {
+    fontSize: 11,
+    color: colors.amber,
+    textAlign: 'center',
   },
   // Area
   areaBanner: {
