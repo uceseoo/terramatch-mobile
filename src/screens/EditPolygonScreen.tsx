@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   type GestureResponderEvent,
   type LayoutChangeEvent,
 } from 'react-native';
-import Svg, { Path, Circle, Line, Polygon as SvgPolygon, G } from 'react-native-svg';
+import Svg, { Path, Circle, Line, G } from 'react-native-svg';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { colors } from '../constants/colors';
@@ -20,6 +20,7 @@ import Header from '../components/Header';
 import Button from '../components/Button';
 import { getPolygonById, updatePolygon } from '../database/queries';
 import { calculateAreaHectares, closeRing } from '../services/geometry';
+import { isNativeMap, MapView, Polygon as MapPolygon, Marker, PROVIDER_GOOGLE } from '../components/MapComponents';
 import type { RootStackParamList, Polygon } from '../types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'EditPolygon'>;
@@ -107,11 +108,15 @@ export default function EditPolygonScreen() {
   const [vertices, setVertices] = useState<number[][]>([]);
   const [tool, setTool] = useState<EditTool>('move');
   const [selectedVertex, setSelectedVertex] = useState<number | null>(null);
-  const [mapSize, setMapSize] = useState({ w: 300, h: 180 });
   const [isDragging, setIsDragging] = useState(false);
+
+  // SVG fallback state
+  const [mapSize, setMapSize] = useState({ w: 300, h: 180 });
 
   // Track if geometry was modified
   const [geometryDirty, setGeometryDirty] = useState(false);
+
+  const nativeMapRef = useRef<any>(null);
 
   useEffect(() => {
     loadPolygon();
@@ -151,13 +156,84 @@ export default function EditPolygonScreen() {
     }
   };
 
-  // ─── Coordinate ↔ SVG mapping ───
+  // ─── Native MapView: vertex drag handler ───
+
+  const handleVertexDragEnd = useCallback((index: number, e: any) => {
+    const { latitude, longitude } = e.nativeEvent.coordinate;
+    setVertices((prev) => {
+      const next = [...prev];
+      next[index] = [longitude, latitude];
+      return next;
+    });
+    setGeometryDirty(true);
+    setIsDragging(false);
+  }, []);
+
+  const handleVertexPress = useCallback((index: number) => {
+    if (tool === 'remove') {
+      if (vertices.length <= 3) {
+        Alert.alert('Cannot Remove', 'A polygon needs at least 3 vertices.');
+      } else {
+        setVertices((prev) => prev.filter((_, i) => i !== index));
+        setGeometryDirty(true);
+        setSelectedVertex(null);
+      }
+    } else {
+      setSelectedVertex(index);
+    }
+  }, [tool, vertices.length]);
+
+  // Add vertex at midpoint between two consecutive vertices
+  const handleMidpointPress = useCallback((afterIndex: number) => {
+    const v1 = vertices[afterIndex];
+    const v2 = vertices[(afterIndex + 1) % vertices.length];
+    const newCoord = [(v1[0] + v2[0]) / 2, (v1[1] + v2[1]) / 2];
+    setVertices((prev) => {
+      const next = [...prev];
+      next.splice(afterIndex + 1, 0, newCoord);
+      return next;
+    });
+    setGeometryDirty(true);
+    setSelectedVertex(afterIndex + 1);
+    setTool('move');
+  }, [vertices]);
+
+  // Map region from vertices
+  const mapRegion = useMemo(() => {
+    if (vertices.length === 0) return { latitude: -1.286, longitude: 36.817, latitudeDelta: 0.01, longitudeDelta: 0.01 };
+    const lats = vertices.map((v) => v[1]);
+    const lngs = vertices.map((v) => v[0]);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    return {
+      latitude: (minLat + maxLat) / 2,
+      longitude: (minLng + maxLng) / 2,
+      latitudeDelta: Math.max((maxLat - minLat) * 1.6, 0.003),
+      longitudeDelta: Math.max((maxLng - minLng) * 1.6, 0.003),
+    };
+  }, [vertices]);
+
+  // Native map polygon coordinates
+  const mapCoords = vertices.map((v) => ({ latitude: v[1], longitude: v[0] }));
+
+  // Midpoint coordinates for native map
+  const midpointCoords = vertices.map((v, i) => {
+    const next = vertices[(i + 1) % vertices.length];
+    return {
+      latitude: (v[1] + next[1]) / 2,
+      longitude: (v[0] + next[0]) / 2,
+      afterIndex: i,
+    };
+  });
+
+  // ─── SVG fallback: Coordinate ↔ SVG mapping ───
 
   const bounds = useMemo(() => {
     if (vertices.length === 0) return { minLng: 0, maxLng: 1, minLat: 0, maxLat: 1 };
     const lngs = vertices.map((v) => v[0]);
     const lats = vertices.map((v) => v[1]);
-    // Add a small buffer so points aren't right at the edge
     const lngRange = Math.max(Math.max(...lngs) - Math.min(...lngs), 0.0001);
     const latRange = Math.max(Math.max(...lats) - Math.min(...lats), 0.0001);
     const buf = 0.15;
@@ -193,13 +269,10 @@ export default function EditPolygonScreen() {
 
   const svgVertices = vertices.map((v) => toSVG(v[0], v[1]));
 
-  // Midpoints between consecutive vertices
-  const midpoints = svgVertices.map((v, i) => {
+  const svgMidpoints = svgVertices.map((v, i) => {
     const next = svgVertices[(i + 1) % svgVertices.length];
     return { x: (v.x + next.x) / 2, y: (v.y + next.y) / 2, afterIndex: i };
   });
-
-  // ─── Touch handling ───
 
   const mapRef = useRef<View>(null);
 
@@ -208,10 +281,7 @@ export default function EditPolygonScreen() {
     let minDist = VERTEX_HIT_RADIUS;
     svgVertices.forEach((v, i) => {
       const d = Math.sqrt((v.x - x) ** 2 + (v.y - y) ** 2);
-      if (d < minDist) {
-        minDist = d;
-        closest = i;
-      }
+      if (d < minDist) { minDist = d; closest = i; }
     });
     return closest >= 0 ? closest : null;
   };
@@ -219,12 +289,9 @@ export default function EditPolygonScreen() {
   const findNearestMidpoint = (x: number, y: number): number | null => {
     let closest = -1;
     let minDist = MIDPOINT_HIT_RADIUS;
-    midpoints.forEach((m, i) => {
+    svgMidpoints.forEach((m, i) => {
       const d = Math.sqrt((m.x - x) ** 2 + (m.y - y) ** 2);
-      if (d < minDist) {
-        minDist = d;
-        closest = i;
-      }
+      if (d < minDist) { minDist = d; closest = i; }
     });
     return closest >= 0 ? closest : null;
   };
@@ -240,7 +307,6 @@ export default function EditPolygonScreen() {
         onMoveShouldSetPanResponder: () => tool === 'move',
         onPanResponderGrant: (e) => {
           const pos = getEventPos(e);
-
           if (tool === 'move') {
             const idx = findNearestVertex(pos.x, pos.y);
             setSelectedVertex(idx);
@@ -248,9 +314,8 @@ export default function EditPolygonScreen() {
           } else if (tool === 'add') {
             const midIdx = findNearestMidpoint(pos.x, pos.y);
             if (midIdx !== null) {
-              // Insert new vertex after midpoints[midIdx].afterIndex
-              const insertAt = midpoints[midIdx].afterIndex + 1;
-              const newCoord = fromSVG(midpoints[midIdx].x, midpoints[midIdx].y);
+              const insertAt = svgMidpoints[midIdx].afterIndex + 1;
+              const newCoord = fromSVG(svgMidpoints[midIdx].x, svgMidpoints[midIdx].y);
               setVertices((prev) => {
                 const next = [...prev];
                 next.splice(insertAt, 0, newCoord);
@@ -258,7 +323,6 @@ export default function EditPolygonScreen() {
               });
               setGeometryDirty(true);
               setSelectedVertex(insertAt);
-              // Switch to move tool to let user drag the new vertex
               setTool('move');
               setIsDragging(true);
             }
@@ -291,7 +355,7 @@ export default function EditPolygonScreen() {
           setIsDragging(false);
         },
       }),
-    [tool, selectedVertex, isDragging, svgVertices, midpoints, vertices, bounds, mapSize]
+    [tool, selectedVertex, isDragging, svgVertices, svgMidpoints, vertices, bounds, mapSize]
   );
 
   // ─── Save ───
@@ -331,7 +395,7 @@ export default function EditPolygonScreen() {
 
   if (!polygon) return null;
 
-  // SVG path for polygon fill
+  // SVG path for polygon fill (web fallback)
   const polyPath = svgVertices.length >= 3
     ? svgVertices.map((v, i) => `${i === 0 ? 'M' : 'L'}${v.x},${v.y}`).join(' ') + ' Z'
     : '';
@@ -366,77 +430,144 @@ export default function EditPolygonScreen() {
         scrollEnabled={!isDragging}
       >
         {/* Geometry editor */}
-        <View
-          ref={mapRef}
-          style={styles.geoPreview}
-          onLayout={onMapLayout}
-          {...panResponder.panHandlers}
-        >
-          <Svg width={mapSize.w} height={mapSize.h}>
-            {/* Grid */}
-            {Array.from({ length: 20 }).map((_, i) => (
-              <Line key={`h${i}`} x1="0" y1={i * 10} x2={mapSize.w} y2={i * 10} stroke={colors.green} strokeWidth={0.3} opacity={0.1} />
-            ))}
-            {Array.from({ length: 35 }).map((_, i) => (
-              <Line key={`v${i}`} x1={i * 10} y1="0" x2={i * 10} y2={mapSize.h} stroke={colors.green} strokeWidth={0.3} opacity={0.1} />
-            ))}
+        {isNativeMap && MapView ? (
+          <View style={styles.geoPreview}>
+            <MapView
+              ref={nativeMapRef}
+              style={StyleSheet.absoluteFill}
+              provider={PROVIDER_GOOGLE}
+              mapType="satellite"
+              initialRegion={mapRegion}
+              scrollEnabled={tool !== 'move' || !isDragging}
+              pitchEnabled={false}
+              rotateEnabled={false}
+            >
+              {/* Polygon fill */}
+              {mapCoords.length >= 3 && (
+                <MapPolygon
+                  coordinates={mapCoords}
+                  fillColor={colors.green + '20'}
+                  strokeColor={colors.green}
+                  strokeWidth={2}
+                />
+              )}
 
-            {/* Polygon fill */}
-            {polyPath && (
-              <Path d={polyPath} fill={colors.green} fillOpacity={0.08} stroke={colors.green} strokeWidth={1.5} strokeDasharray="4,3" />
-            )}
+              {/* Vertex markers — each independently draggable */}
+              {mapCoords.map((coord, i) => (
+                <Marker
+                  key={`v-${i}-${coord.latitude.toFixed(6)}-${coord.longitude.toFixed(6)}`}
+                  coordinate={coord}
+                  draggable={tool === 'move'}
+                  onDragStart={() => { setSelectedVertex(i); setIsDragging(true); }}
+                  onDragEnd={(e: any) => handleVertexDragEnd(i, e)}
+                  onPress={() => handleVertexPress(i)}
+                  anchor={{ x: 0.5, y: 0.5 }}
+                  tracksViewChanges={false}
+                >
+                  <View style={[
+                    styles.vertexMarker,
+                    selectedVertex === i && styles.vertexMarkerSelected,
+                    tool === 'remove' && styles.vertexMarkerRemove,
+                  ]}>
+                    <View style={[
+                      styles.vertexMarkerInner,
+                      tool === 'remove' && styles.vertexMarkerInnerRemove,
+                    ]} />
+                  </View>
+                </Marker>
+              ))}
 
-            {/* Edges */}
-            {svgVertices.map((v, i) => {
-              const next = svgVertices[(i + 1) % svgVertices.length];
-              return (
-                <Line key={`e${i}`} x1={v.x} y1={v.y} x2={next.x} y2={next.y} stroke={colors.green} strokeWidth={2} />
-              );
-            })}
+              {/* Midpoint markers (only in add mode) */}
+              {tool === 'add' && midpointCoords.map((mp, i) => (
+                <Marker
+                  key={`m-${i}`}
+                  coordinate={{ latitude: mp.latitude, longitude: mp.longitude }}
+                  onPress={() => handleMidpointPress(mp.afterIndex)}
+                  anchor={{ x: 0.5, y: 0.5 }}
+                  tracksViewChanges={false}
+                >
+                  <View style={styles.midpointMarker}>
+                    <Text style={styles.midpointPlus}>+</Text>
+                  </View>
+                </Marker>
+              ))}
+            </MapView>
 
-            {/* Midpoint handles (only in add mode) */}
-            {tool === 'add' && midpoints.map((m, i) => (
-              <G key={`m${i}`}>
-                <Circle cx={m.x} cy={m.y} r={8} fill={colors.green} opacity={0.08} />
-                <Circle cx={m.x} cy={m.y} r={4} fill="none" stroke={colors.green} strokeWidth={1} strokeDasharray="2,2" opacity={0.6} />
-                <Line x1={m.x - 3} y1={m.y} x2={m.x + 3} y2={m.y} stroke={colors.green} strokeWidth={1} opacity={0.6} />
-                <Line x1={m.x} y1={m.y - 3} x2={m.x} y2={m.y + 3} stroke={colors.green} strokeWidth={1} opacity={0.6} />
-              </G>
-            ))}
-
-            {/* Vertex handles */}
-            {svgVertices.map((v, i) => {
-              const isSelected = selectedVertex === i;
-              const isRemoveMode = tool === 'remove';
-              const handleColor = isRemoveMode ? colors.red : colors.green;
-              return (
-                <G key={`v${i}`}>
-                  <Circle cx={v.x} cy={v.y} r={isSelected ? 14 : 10} fill={handleColor} opacity={isSelected ? 0.2 : 0.1} />
-                  <Circle cx={v.x} cy={v.y} r={isSelected ? 7 : 5} fill={handleColor} stroke={colors.bg} strokeWidth={2} />
-                  {isRemoveMode && (
-                    <>
-                      <Line x1={v.x - 3} y1={v.y} x2={v.x + 3} y2={v.y} stroke={colors.bg} strokeWidth={1.5} />
-                    </>
-                  )}
+            {/* Info overlays */}
+            <View style={styles.geoLabel}>
+              <Text style={styles.geoLabelText}>
+                {tool === 'move' && 'Drag vertices to reshape'}
+                {tool === 'add' && 'Tap + to add vertex'}
+                {tool === 'remove' && 'Tap vertex to remove'}
+              </Text>
+            </View>
+            <View style={styles.geoInfo}>
+              <Text style={styles.geoInfoText}>
+                {vertices.length} vertices · {area.toFixed(2)} ha
+              </Text>
+            </View>
+          </View>
+        ) : (
+          /* SVG fallback for web */
+          <View
+            ref={mapRef}
+            style={styles.geoPreview}
+            onLayout={onMapLayout}
+            {...panResponder.panHandlers}
+          >
+            <Svg width={mapSize.w} height={mapSize.h}>
+              {Array.from({ length: 20 }).map((_, i) => (
+                <Line key={`h${i}`} x1="0" y1={i * 10} x2={mapSize.w} y2={i * 10} stroke={colors.green} strokeWidth={0.3} opacity={0.1} />
+              ))}
+              {Array.from({ length: 35 }).map((_, i) => (
+                <Line key={`v${i}`} x1={i * 10} y1="0" x2={i * 10} y2={mapSize.h} stroke={colors.green} strokeWidth={0.3} opacity={0.1} />
+              ))}
+              {polyPath && (
+                <Path d={polyPath} fill={colors.green} fillOpacity={0.08} stroke={colors.green} strokeWidth={1.5} strokeDasharray="4,3" />
+              )}
+              {svgVertices.map((v, i) => {
+                const next = svgVertices[(i + 1) % svgVertices.length];
+                return (
+                  <Line key={`e${i}`} x1={v.x} y1={v.y} x2={next.x} y2={next.y} stroke={colors.green} strokeWidth={2} />
+                );
+              })}
+              {tool === 'add' && svgMidpoints.map((m, i) => (
+                <G key={`m${i}`}>
+                  <Circle cx={m.x} cy={m.y} r={8} fill={colors.green} opacity={0.08} />
+                  <Circle cx={m.x} cy={m.y} r={4} fill="none" stroke={colors.green} strokeWidth={1} strokeDasharray="2,2" opacity={0.6} />
+                  <Line x1={m.x - 3} y1={m.y} x2={m.x + 3} y2={m.y} stroke={colors.green} strokeWidth={1} opacity={0.6} />
+                  <Line x1={m.x} y1={m.y - 3} x2={m.x} y2={m.y + 3} stroke={colors.green} strokeWidth={1} opacity={0.6} />
                 </G>
-              );
-            })}
-          </Svg>
-
-          {/* Info overlays */}
-          <View style={styles.geoLabel}>
-            <Text style={styles.geoLabelText}>
-              {tool === 'move' && 'Drag vertices to reshape'}
-              {tool === 'add' && 'Tap midpoints to add vertex'}
-              {tool === 'remove' && 'Tap vertex to remove'}
-            </Text>
+              ))}
+              {svgVertices.map((v, i) => {
+                const isSelected = selectedVertex === i;
+                const isRemoveMode = tool === 'remove';
+                const handleColor = isRemoveMode ? colors.red : colors.green;
+                return (
+                  <G key={`v${i}`}>
+                    <Circle cx={v.x} cy={v.y} r={isSelected ? 14 : 10} fill={handleColor} opacity={isSelected ? 0.2 : 0.1} />
+                    <Circle cx={v.x} cy={v.y} r={isSelected ? 7 : 5} fill={handleColor} stroke={colors.bg} strokeWidth={2} />
+                    {isRemoveMode && (
+                      <Line x1={v.x - 3} y1={v.y} x2={v.x + 3} y2={v.y} stroke={colors.bg} strokeWidth={1.5} />
+                    )}
+                  </G>
+                );
+              })}
+            </Svg>
+            <View style={styles.geoLabel}>
+              <Text style={styles.geoLabelText}>
+                {tool === 'move' && 'Drag vertices to reshape'}
+                {tool === 'add' && 'Tap midpoints to add vertex'}
+                {tool === 'remove' && 'Tap vertex to remove'}
+              </Text>
+            </View>
+            <View style={styles.geoInfo}>
+              <Text style={styles.geoInfoText}>
+                {vertices.length} vertices · {area.toFixed(2)} ha
+              </Text>
+            </View>
           </View>
-          <View style={styles.geoInfo}>
-            <Text style={styles.geoInfoText}>
-              {vertices.length} vertices · {area.toFixed(2)} ha
-            </Text>
-          </View>
-        </View>
+        )}
 
         {/* Edit tools */}
         <View style={styles.toolRow}>
@@ -547,7 +678,7 @@ const styles = StyleSheet.create({
   },
   // Geometry editor
   geoPreview: {
-    height: 180,
+    height: 240,
     borderRadius: 12,
     backgroundColor: '#0b1810',
     borderWidth: 1,
@@ -582,6 +713,52 @@ const styles = StyleSheet.create({
     fontSize: 9,
     color: colors.text3,
     fontVariant: ['tabular-nums'],
+  },
+  // Native map markers
+  vertexMarker: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: colors.green + '30',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  vertexMarkerSelected: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: colors.green + '50',
+  },
+  vertexMarkerRemove: {
+    backgroundColor: colors.red + '30',
+  },
+  vertexMarkerInner: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: colors.green,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  vertexMarkerInnerRemove: {
+    backgroundColor: colors.red,
+  },
+  midpointMarker: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(34,197,94,0.2)',
+    borderWidth: 1,
+    borderColor: colors.green,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  midpointPlus: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.green,
+    marginTop: -1,
   },
   // Tools
   toolRow: {

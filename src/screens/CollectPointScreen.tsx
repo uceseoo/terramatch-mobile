@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, Alert, StyleSheet } from 'react-native';
 import Svg, { Path, Circle, Line } from 'react-native-svg';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -8,6 +8,7 @@ import Header from '../components/Header';
 import Button from '../components/Button';
 import { requestLocationPermission, getCurrentLocation, type GPSPoint } from '../services/location';
 import { getDatabase } from '../database/db';
+import { isNativeMap, MapView, Marker, PROVIDER_GOOGLE } from '../components/MapComponents';
 import type { RootStackParamList } from '../types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'CollectPoint'>;
@@ -107,46 +108,69 @@ export default function CollectPointScreen() {
       />
 
       <View style={styles.content}>
-        {/* Map with crosshair */}
+        {/* Map with location */}
         <View style={styles.mapContainer}>
-          <Svg width="100%" height="100%">
-            {/* Grid */}
-            {Array.from({ length: 24 }).map((_, i) => (
-              <Line key={`h${i}`} x1="0" y1={i * 10} x2={MAP_SIZE * 2} y2={i * 10} stroke={colors.green} strokeWidth={0.3} opacity={0.15} />
-            ))}
-            {Array.from({ length: 40 }).map((_, i) => (
-              <Line key={`v${i}`} x1={i * 10} y1="0" x2={i * 10} y2={MAP_SIZE * 2} stroke={colors.green} strokeWidth={0.3} opacity={0.15} />
-            ))}
-
-            {/* Crosshair */}
-            <Line x1={CENTER} y1={CENTER - 30} x2={CENTER} y2={CENTER - 8} stroke={colors.text3} strokeWidth={1} opacity={0.6} />
-            <Line x1={CENTER} y1={CENTER + 8} x2={CENTER} y2={CENTER + 30} stroke={colors.text3} strokeWidth={1} opacity={0.6} />
-            <Line x1={CENTER - 30} y1={CENTER} x2={CENTER - 8} y2={CENTER} stroke={colors.text3} strokeWidth={1} opacity={0.6} />
-            <Line x1={CENTER + 8} y1={CENTER} x2={CENTER + 30} y2={CENTER} stroke={colors.text3} strokeWidth={1} opacity={0.6} />
-
-            {/* Location dot */}
-            {location && (
-              <>
-                <Circle cx={CENTER} cy={CENTER} r={20} fill={colors.blue} opacity={0.12} />
-                <Circle cx={CENTER} cy={CENTER} r={8} fill={colors.blue} stroke="#fff" strokeWidth={2.5} />
-              </>
-            )}
-
-            {/* Captured indicator */}
-            {captured && (
-              <>
-                <Circle cx={CENTER} cy={CENTER} r={16} fill="none" stroke={colors.ok} strokeWidth={2} opacity={0.6} />
-                <Path
-                  d={`M${CENTER - 5},${CENTER} L${CENTER - 1},${CENTER + 4} L${CENTER + 6},${CENTER - 4}`}
-                  stroke={colors.ok}
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  fill="none"
-                />
-              </>
-            )}
-          </Svg>
+          {isNativeMap && MapView ? (
+            <>
+              <MapView
+                style={StyleSheet.absoluteFill}
+                provider={PROVIDER_GOOGLE}
+                mapType="satellite"
+                showsUserLocation
+                showsMyLocationButton={false}
+                region={location ? {
+                  latitude: location.latitude,
+                  longitude: location.longitude,
+                  latitudeDelta: 0.002,
+                  longitudeDelta: 0.002,
+                } : {
+                  latitude: -1.286,
+                  longitude: 36.817,
+                  latitudeDelta: 0.01,
+                  longitudeDelta: 0.01,
+                }}
+              >
+                {captured && location && (
+                  <Marker
+                    coordinate={{ latitude: location.latitude, longitude: location.longitude }}
+                    anchor={{ x: 0.5, y: 0.5 }}
+                  >
+                    <View style={styles.capturedMarker}>
+                      <View style={styles.capturedMarkerInner} />
+                    </View>
+                  </Marker>
+                )}
+              </MapView>
+            </>
+          ) : (
+            <Svg width="100%" height="100%">
+              {Array.from({ length: 24 }).map((_, i) => (
+                <Line key={`h${i}`} x1="0" y1={i * 10} x2={MAP_SIZE * 2} y2={i * 10} stroke={colors.green} strokeWidth={0.3} opacity={0.15} />
+              ))}
+              {Array.from({ length: 40 }).map((_, i) => (
+                <Line key={`v${i}`} x1={i * 10} y1="0" x2={i * 10} y2={MAP_SIZE * 2} stroke={colors.green} strokeWidth={0.3} opacity={0.15} />
+              ))}
+              <Line x1={CENTER} y1={CENTER - 30} x2={CENTER} y2={CENTER - 8} stroke={colors.text3} strokeWidth={1} opacity={0.6} />
+              <Line x1={CENTER} y1={CENTER + 8} x2={CENTER} y2={CENTER + 30} stroke={colors.text3} strokeWidth={1} opacity={0.6} />
+              <Line x1={CENTER - 30} y1={CENTER} x2={CENTER - 8} y2={CENTER} stroke={colors.text3} strokeWidth={1} opacity={0.6} />
+              <Line x1={CENTER + 8} y1={CENTER} x2={CENTER + 30} y2={CENTER} stroke={colors.text3} strokeWidth={1} opacity={0.6} />
+              {location && (
+                <>
+                  <Circle cx={CENTER} cy={CENTER} r={20} fill={colors.blue} opacity={0.12} />
+                  <Circle cx={CENTER} cy={CENTER} r={8} fill={colors.blue} stroke="#fff" strokeWidth={2.5} />
+                </>
+              )}
+              {captured && (
+                <>
+                  <Circle cx={CENTER} cy={CENTER} r={16} fill="none" stroke={colors.ok} strokeWidth={2} opacity={0.6} />
+                  <Path
+                    d={`M${CENTER - 5},${CENTER} L${CENTER - 1},${CENTER + 4} L${CENTER + 6},${CENTER - 4}`}
+                    stroke={colors.ok} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none"
+                  />
+                </>
+              )}
+            </Svg>
+          )}
 
           {/* Loading indicator */}
           {loading && (
@@ -319,6 +343,22 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     overflow: 'hidden',
     marginBottom: 14,
+  },
+  capturedMarker: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(34,197,94,0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  capturedMarkerInner: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: colors.ok,
+    borderWidth: 2,
+    borderColor: '#fff',
   },
   loadingOverlay: {
     position: 'absolute',
