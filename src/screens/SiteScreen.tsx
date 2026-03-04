@@ -196,7 +196,7 @@ export default function SiteScreen() {
             {[
               { icon: <WalkIcon />, label: 'Track Polygon', desc: 'Walk & trace boundary', onPress: () => { setShowCollect(false); navigation.navigate('TrackPolygon', { siteId }); } },
               { icon: <GpsIcon />, label: 'Collect Point', desc: 'Drop a GPS point', onPress: () => { setShowCollect(false); navigation.navigate('CollectPoint', { siteId }); } },
-              { icon: <CamIcon />, label: 'Capture Photo', desc: 'Geotagged photo', onPress: () => { setShowCollect(false); Alert.alert('Photo Captured', 'Photo captured with GPS tag!'); } },
+              { icon: <CamIcon />, label: 'Capture Photo', desc: 'Geotagged photo', onPress: () => { setShowCollect(false); navigation.navigate('CapturePhoto', { siteId }); } },
             ].map((item, i) => (
               <TouchableOpacity key={i} onPress={item.onPress} style={styles.collectItem} activeOpacity={0.7}>
                 <View style={styles.collectItemIcon}>{item.icon}</View>

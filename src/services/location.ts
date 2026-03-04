@@ -43,17 +43,17 @@ export async function getCurrentLocation(): Promise<GPSPoint> {
  * Start watching position with a callback.
  * Returns a subscription that can be removed to stop tracking.
  *
- * @param onUpdate Called with each new GPS fix
- * @param accuracyFilter Only accept fixes with accuracy <= this value in meters (default 10)
+ * @param onUpdate Called with each new GPS fix (always called — no filtering)
+ * @param onStats Called with GPS stats on every reading, regardless of accuracy
  */
 export async function startTracking(
   onUpdate: (point: GPSPoint, stats: GPSStats) => void,
-  accuracyFilter: number = 10
+  onStats?: (stats: GPSStats) => void
 ): Promise<Location.LocationSubscription> {
   const subscription = await Location.watchPositionAsync(
     {
-      accuracy: Location.Accuracy.BestForNavigation,
-      distanceInterval: 2, // meters between updates
+      accuracy: Location.Accuracy.High,
+      distanceInterval: 0, // report every update regardless of distance
       timeInterval: 1000, // ms between updates
     },
     (loc) => {
@@ -70,10 +70,11 @@ export async function startTracking(
         speed: loc.coords.speed,
       };
 
-      // Only emit if accuracy meets threshold (or if accuracy is unavailable)
-      if (point.accuracy === null || point.accuracy <= accuracyFilter) {
-        onUpdate(point, stats);
-      }
+      // Always report stats
+      onStats?.(stats);
+
+      // Always accept the point — let the UI decide what to do with low-accuracy data
+      onUpdate(point, stats);
     }
   );
   return subscription;

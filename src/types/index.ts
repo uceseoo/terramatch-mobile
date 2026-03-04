@@ -90,6 +90,7 @@ export type RootStackParamList = {
   Site: { siteId: number; projectName: string };
   TrackPolygon: { siteId: number };
   CollectPoint: { siteId: number };
+  CapturePhoto: { siteId: number };
   PolygonDetail: { polygonId: number };
   EditPolygon: { polygonId: number };
   QAReview: { polygonId: number };
