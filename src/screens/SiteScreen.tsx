@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -18,7 +18,9 @@ import Badge from '../components/Badge';
 import Button from '../components/Button';
 import { getSiteById, getPolygonsForSite } from '../database/queries';
 import { pickAndImportGeoJSON, exportGeoJSON } from '../services/geojson';
-import type { RootStackParamList, Polygon, Site } from '../types';
+import { isNativeMap, MapView, Polygon as MapPolygon, Marker, PROVIDER_GOOGLE } from '../components/MapComponents';
+import { getCurrentLocation, requestLocationPermission, type GPSPoint } from '../services/location';
+import type { RootStackParamList, Polygon as PolygonType, Site } from '../types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Site'>;
 type Route = RouteProp<RootStackParamList, 'Site'>;
@@ -117,10 +119,12 @@ export default function SiteScreen() {
   const { siteId, projectName } = route.params;
 
   const [site, setSite] = useState<SiteData | null>(null);
-  const [polygons, setPolygons] = useState<Polygon[]>([]);
+  const [polygons, setPolygons] = useState<PolygonType[]>([]);
   const [showCollect, setShowCollect] = useState(false);
   const [myLocVisible, setMyLocVisible] = useState(false);
+  const [myLocation, setMyLocation] = useState<GPSPoint | null>(null);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const mapRef = useRef<any>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -169,6 +173,56 @@ export default function SiteScreen() {
     }
   };
 
+  // Fetch user location when toggled
+  useEffect(() => {
+    if (myLocVisible && !myLocation) {
+      (async () => {
+        const granted = await requestLocationPermission();
+        if (granted) {
+          try {
+            const loc = await getCurrentLocation();
+            setMyLocation(loc);
+          } catch {}
+        }
+      })();
+    }
+  }, [myLocVisible]);
+
+  // Compute map region from all polygon coordinates
+  const mapRegion = useCallback(() => {
+    const allCoords: { latitude: number; longitude: number }[] = [];
+    for (const pg of polygons) {
+      if (pg.coordinates) {
+        try {
+          const coords: number[][] = JSON.parse(pg.coordinates);
+          coords.forEach((c) => allCoords.push({ latitude: c[1], longitude: c[0] }));
+        } catch {}
+      }
+    }
+    if (allCoords.length === 0) {
+      // Default to Kenya
+      return { latitude: -1.286, longitude: 36.817, latitudeDelta: 0.01, longitudeDelta: 0.01 };
+    }
+    const lats = allCoords.map((c) => c.latitude);
+    const lngs = allCoords.map((c) => c.longitude);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    return {
+      latitude: (minLat + maxLat) / 2,
+      longitude: (minLng + maxLng) / 2,
+      latitudeDelta: Math.max((maxLat - minLat) * 1.4, 0.005),
+      longitudeDelta: Math.max((maxLng - minLng) * 1.4, 0.005),
+    };
+  }, [polygons]);
+
+  const getPolygonColor = (status: string) => {
+    if (status === 'approved') return colors.ok;
+    if (status === 'needs-review') return colors.amber;
+    return colors.green;
+  };
+
   if (!site) return null;
 
   return (
@@ -211,39 +265,74 @@ export default function SiteScreen() {
       </Modal>
 
       <ScrollView style={styles.scroll}>
-        {/* Site Map Mockup */}
+        {/* Site Map */}
         <View style={styles.mapContainer}>
-          {/* Grid background */}
-          <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
-            {Array.from({ length: 18 }).map((_, i) => (
-              <Line key={`h${i}`} x1="0" y1={i * 10} x2="400" y2={i * 10} stroke={colors.green} strokeWidth={0.5} opacity={0.12} />
-            ))}
-            {Array.from({ length: 40 }).map((_, i) => (
-              <Line key={`v${i}`} x1={i * 10} y1="0" x2={i * 10} y2="200" stroke={colors.green} strokeWidth={0.5} opacity={0.12} />
-            ))}
-          </Svg>
-          {/* Rendered polygons */}
-          <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
-            {polygons.map((pg, i) => {
-              const shapes = [
-                '40,30 75,18 95,40 85,75 50,70',
-                '105,25 140,22 150,55 130,78 98,60',
-                '170,30 205,18 225,40 215,75 180,70',
-                '235,25 270,22 280,55 260,78 228,60',
-              ];
-              const col = pg.status === 'approved' ? colors.ok : pg.status === 'needs-review' ? colors.amber : colors.green;
-              return (
-                <SvgPolygon key={pg.id} points={shapes[i % 4]} fill={col} fillOpacity={0.15} stroke={col} strokeWidth={1.5} />
-              );
-            })}
-            {/* My location */}
-            {myLocVisible && (
-              <>
-                <Circle cx={185} cy={75} r={12} fill={colors.blue} opacity={0.15} />
-                <Circle cx={185} cy={75} r={5} fill={colors.blue} stroke="#fff" strokeWidth={2} />
-              </>
-            )}
-          </Svg>
+          {isNativeMap && MapView ? (
+            <MapView
+              ref={mapRef}
+              style={StyleSheet.absoluteFill}
+              provider={PROVIDER_GOOGLE}
+              mapType="satellite"
+              initialRegion={mapRegion()}
+              showsUserLocation={myLocVisible}
+              showsMyLocationButton={false}
+            >
+              {polygons.map((pg) => {
+                let coords: { latitude: number; longitude: number }[] = [];
+                if (pg.coordinates) {
+                  try {
+                    const raw: number[][] = JSON.parse(pg.coordinates);
+                    coords = raw.map((c) => ({ latitude: c[1], longitude: c[0] }));
+                  } catch {}
+                }
+                if (coords.length < 3) return null;
+                const col = getPolygonColor(pg.status);
+                return (
+                  <MapPolygon
+                    key={pg.id}
+                    coordinates={coords}
+                    fillColor={col + '30'}
+                    strokeColor={col}
+                    strokeWidth={2}
+                    tappable
+                    onPress={() => navigation.navigate('PolygonDetail', { polygonId: pg.id })}
+                  />
+                );
+              })}
+            </MapView>
+          ) : (
+            <>
+              {/* SVG fallback for web */}
+              <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
+                {Array.from({ length: 18 }).map((_, i) => (
+                  <Line key={`h${i}`} x1="0" y1={i * 10} x2="400" y2={i * 10} stroke={colors.green} strokeWidth={0.5} opacity={0.12} />
+                ))}
+                {Array.from({ length: 40 }).map((_, i) => (
+                  <Line key={`v${i}`} x1={i * 10} y1="0" x2={i * 10} y2="200" stroke={colors.green} strokeWidth={0.5} opacity={0.12} />
+                ))}
+              </Svg>
+              <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
+                {polygons.map((pg, i) => {
+                  const shapes = [
+                    '40,30 75,18 95,40 85,75 50,70',
+                    '105,25 140,22 150,55 130,78 98,60',
+                    '170,30 205,18 225,40 215,75 180,70',
+                    '235,25 270,22 280,55 260,78 228,60',
+                  ];
+                  const col = getPolygonColor(pg.status);
+                  return (
+                    <SvgPolygon key={pg.id} points={shapes[i % 4]} fill={col} fillOpacity={0.15} stroke={col} strokeWidth={1.5} />
+                  );
+                })}
+                {myLocVisible && (
+                  <>
+                    <Circle cx={185} cy={75} r={12} fill={colors.blue} opacity={0.15} />
+                    <Circle cx={185} cy={75} r={5} fill={colors.blue} stroke="#fff" strokeWidth={2} />
+                  </>
+                )}
+              </Svg>
+            </>
+          )}
           {/* My location toggle */}
           <View style={styles.mapControls}>
             <TouchableOpacity

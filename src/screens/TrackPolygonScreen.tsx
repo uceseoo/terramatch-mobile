@@ -19,6 +19,7 @@ import Button from '../components/Button';
 import { requestLocationPermission, startTracking, type GPSPoint, type GPSStats } from '../services/location';
 import { calculateAreaHectares, closeRing, coordsToSVG } from '../services/geometry';
 import { createPolygon } from '../database/queries';
+import { isNativeMap, MapView, Polyline as MapPolyline, Polygon as MapPolygon, Marker, PROVIDER_GOOGLE } from '../components/MapComponents';
 import type { RootStackParamList } from '../types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'TrackPolygon'>;
@@ -208,7 +209,9 @@ export default function TrackPolygonScreen() {
     }
   };
 
-  // ─── SVG Map rendering ───
+  const mapRef = useRef<any>(null);
+
+  // ─── SVG Map rendering (web fallback) ───
 
   const MAP_W = 340;
   const MAP_H = 200;
@@ -231,6 +234,22 @@ export default function TrackPolygonScreen() {
   // Area calculation for display
   const coords = points.map((p) => [p.longitude, p.latitude]);
   const areaHa = points.length >= 3 ? calculateAreaHectares(coords) : 0;
+
+  // Native map coordinates
+  const mapCoords = points.map((p) => ({ latitude: p.latitude, longitude: p.longitude }));
+  const lastPoint = points.length > 0 ? points[points.length - 1] : null;
+
+  // Auto-center map on latest point
+  useEffect(() => {
+    if (isNativeMap && mapRef.current && lastPoint && state === 'tracking') {
+      mapRef.current.animateToRegion({
+        latitude: lastPoint.latitude,
+        longitude: lastPoint.longitude,
+        latitudeDelta: 0.003,
+        longitudeDelta: 0.003,
+      }, 500);
+    }
+  }, [lastPoint?.latitude, lastPoint?.longitude]);
 
   return (
     <View style={styles.container}>
@@ -268,56 +287,91 @@ export default function TrackPolygonScreen() {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
         {/* Map area */}
         <View style={styles.mapContainer}>
-          <Svg width="100%" height="100%">
-            {/* Grid background */}
-            {Array.from({ length: 22 }).map((_, i) => (
-              <Line key={`h${i}`} x1="0" y1={i * 10} x2={MAP_W} y2={i * 10} stroke={colors.green} strokeWidth={0.3} opacity={0.15} />
-            ))}
-            {Array.from({ length: 36 }).map((_, i) => (
-              <Line key={`v${i}`} x1={i * 10} y1="0" x2={i * 10} y2={MAP_H} stroke={colors.green} strokeWidth={0.3} opacity={0.15} />
-            ))}
+          {isNativeMap && MapView ? (
+            <MapView
+              ref={mapRef}
+              style={StyleSheet.absoluteFill}
+              provider={PROVIDER_GOOGLE}
+              mapType="satellite"
+              showsUserLocation={state === 'tracking' || state === 'paused'}
+              showsMyLocationButton={false}
+              initialRegion={{
+                latitude: lastPoint?.latitude ?? -1.286,
+                longitude: lastPoint?.longitude ?? 36.817,
+                latitudeDelta: 0.005,
+                longitudeDelta: 0.005,
+              }}
+            >
+              {/* Tracked path as polyline */}
+              {mapCoords.length >= 2 && (
+                <MapPolyline
+                  coordinates={mapCoords}
+                  strokeColor={colors.green}
+                  strokeWidth={3}
+                />
+              )}
 
-            {/* Tracked path */}
-            {pathD && (
-              <Path d={pathD} fill="none" stroke={colors.green} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
-            )}
+              {/* Closing line (dashed effect: thin line) */}
+              {mapCoords.length >= 3 && (
+                <MapPolyline
+                  coordinates={[mapCoords[mapCoords.length - 1], mapCoords[0]]}
+                  strokeColor={colors.green}
+                  strokeWidth={1}
+                  lineDashPattern={[8, 8]}
+                />
+              )}
 
-            {/* Closing line (dashed) when we have 3+ points */}
-            {svgCoords.length >= 3 && (
-              <Path
-                d={`M${svgCoords[svgCoords.length - 1].x},${svgCoords[svgCoords.length - 1].y} L${svgCoords[0].x},${svgCoords[0].y}`}
-                fill="none"
-                stroke={colors.green}
-                strokeWidth={1.5}
-                strokeDasharray="4,4"
-                opacity={0.5}
-              />
-            )}
+              {/* Filled polygon preview when complete */}
+              {state === 'complete' && mapCoords.length >= 3 && (
+                <MapPolygon
+                  coordinates={mapCoords}
+                  fillColor={colors.green + '20'}
+                  strokeColor={colors.green}
+                  strokeWidth={2}
+                />
+              )}
 
-            {/* Filled polygon preview when complete */}
-            {state === 'complete' && svgCoords.length >= 3 && (
-              <Path
-                d={svgCoords.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ') + ' Z'}
-                fill={colors.green}
-                fillOpacity={0.12}
-                stroke={colors.green}
-                strokeWidth={2}
-              />
-            )}
-
-            {/* Point markers */}
-            {svgCoords.map((p, i) => (
-              <Circle key={i} cx={p.x} cy={p.y} r={i === 0 ? 5 : 3} fill={i === 0 ? colors.green : colors.greenDim} stroke={colors.bg} strokeWidth={1.5} />
-            ))}
-
-            {/* My location (blue pulsing dot at latest point) */}
-            {lastSvg && state !== 'complete' && (
-              <>
-                <Circle cx={lastSvg.x} cy={lastSvg.y} r={14} fill={colors.blue} opacity={0.15} />
-                <Circle cx={lastSvg.x} cy={lastSvg.y} r={6} fill={colors.blue} stroke="#fff" strokeWidth={2} />
-              </>
-            )}
-          </Svg>
+              {/* Start marker */}
+              {mapCoords.length > 0 && (
+                <Marker coordinate={mapCoords[0]} anchor={{ x: 0.5, y: 0.5 }}>
+                  <View style={styles.startMarker} />
+                </Marker>
+              )}
+            </MapView>
+          ) : (
+            <Svg width="100%" height="100%">
+              {Array.from({ length: 22 }).map((_, i) => (
+                <Line key={`h${i}`} x1="0" y1={i * 10} x2={MAP_W} y2={i * 10} stroke={colors.green} strokeWidth={0.3} opacity={0.15} />
+              ))}
+              {Array.from({ length: 36 }).map((_, i) => (
+                <Line key={`v${i}`} x1={i * 10} y1="0" x2={i * 10} y2={MAP_H} stroke={colors.green} strokeWidth={0.3} opacity={0.15} />
+              ))}
+              {pathD && (
+                <Path d={pathD} fill="none" stroke={colors.green} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+              )}
+              {svgCoords.length >= 3 && (
+                <Path
+                  d={`M${svgCoords[svgCoords.length - 1].x},${svgCoords[svgCoords.length - 1].y} L${svgCoords[0].x},${svgCoords[0].y}`}
+                  fill="none" stroke={colors.green} strokeWidth={1.5} strokeDasharray="4,4" opacity={0.5}
+                />
+              )}
+              {state === 'complete' && svgCoords.length >= 3 && (
+                <Path
+                  d={svgCoords.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ') + ' Z'}
+                  fill={colors.green} fillOpacity={0.12} stroke={colors.green} strokeWidth={2}
+                />
+              )}
+              {svgCoords.map((p, i) => (
+                <Circle key={i} cx={p.x} cy={p.y} r={i === 0 ? 5 : 3} fill={i === 0 ? colors.green : colors.greenDim} stroke={colors.bg} strokeWidth={1.5} />
+              ))}
+              {lastSvg && state !== 'complete' && (
+                <>
+                  <Circle cx={lastSvg.x} cy={lastSvg.y} r={14} fill={colors.blue} opacity={0.15} />
+                  <Circle cx={lastSvg.x} cy={lastSvg.y} r={6} fill={colors.blue} stroke="#fff" strokeWidth={2} />
+                </>
+              )}
+            </Svg>
+          )}
 
           {/* Status overlay */}
           <View style={styles.mapOverlay}>
@@ -549,6 +603,14 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     overflow: 'hidden',
     marginBottom: 14,
+  },
+  startMarker: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: colors.green,
+    borderWidth: 2,
+    borderColor: '#fff',
   },
   mapOverlay: {
     position: 'absolute',
