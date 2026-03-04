@@ -12,6 +12,8 @@ import SiteScreen from '../screens/SiteScreen';
 import PolygonDetailScreen from '../screens/PolygonDetailScreen';
 import EditPolygonScreen from '../screens/EditPolygonScreen';
 import QAReviewScreen from '../screens/QAReviewScreen';
+import TrackPolygonScreen from '../screens/TrackPolygonScreen';
+import CollectPointScreen from '../screens/CollectPointScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -39,6 +41,8 @@ export default function RootNavigator() {
             <Stack.Screen name="PolygonDetail" component={PolygonDetailScreen} />
             <Stack.Screen name="EditPolygon" component={EditPolygonScreen} />
             <Stack.Screen name="QAReview" component={QAReviewScreen} />
+            <Stack.Screen name="TrackPolygon" component={TrackPolygonScreen} />
+            <Stack.Screen name="CollectPoint" component={CollectPointScreen} />
           </>
         ) : (
           <Stack.Screen
