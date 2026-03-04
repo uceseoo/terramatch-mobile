@@ -1,5 +1,5 @@
 import { getDatabase } from './db';
-import type { Project, Site, Polygon, PolygonStatus } from '../types';
+import type { Project, Site, Polygon, PolygonStatus, QAReview } from '../types';
 
 // ═══ Project Queries ═══
 
@@ -161,4 +161,46 @@ export async function getPolygonCountForSite(siteId: number): Promise<number> {
     [siteId]
   );
   return result?.count ?? 0;
+}
+
+// ═══ QA Review Queries ═══
+
+export interface CreateQAReviewData {
+  polygon_id: number;
+  reviewer_name: string;
+  checks_json: string;
+  result: 'approved' | 'flagged' | 'pending';
+  notes?: string;
+}
+
+export async function createQAReview(data: CreateQAReviewData): Promise<number> {
+  const db = await getDatabase();
+  const result = await db.runAsync(
+    `INSERT INTO qa_reviews (polygon_id, reviewer_name, checks_json, result, notes)
+     VALUES (?, ?, ?, ?, ?)`,
+    [
+      data.polygon_id,
+      data.reviewer_name,
+      data.checks_json,
+      data.result,
+      data.notes || null,
+    ]
+  );
+  return result.lastInsertRowId;
+}
+
+export async function getQAReviewsForPolygon(polygonId: number): Promise<QAReview[]> {
+  const db = await getDatabase();
+  return db.getAllAsync<QAReview>(
+    `SELECT * FROM qa_reviews WHERE polygon_id = ? ORDER BY created_at DESC`,
+    [polygonId]
+  );
+}
+
+export async function getLatestQAReview(polygonId: number): Promise<QAReview | null> {
+  const db = await getDatabase();
+  return db.getFirstAsync<QAReview>(
+    `SELECT * FROM qa_reviews WHERE polygon_id = ? ORDER BY created_at DESC LIMIT 1`,
+    [polygonId]
+  );
 }
