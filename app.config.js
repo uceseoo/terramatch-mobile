@@ -1,4 +1,13 @@
-require('dotenv/config');
+try {
+  require('dotenv/config');
+} catch (_) {
+  // dotenv is optional — EAS builds inject env vars directly
+}
+
+const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY || '';
+console.log(
+  `[app.config.js] GOOGLE_MAPS_API_KEY length: ${googleMapsApiKey.length}`,
+);
 
 module.exports = {
   expo: {
@@ -38,7 +47,7 @@ module.exports = {
       ],
       config: {
         googleMaps: {
-          apiKey: process.env.GOOGLE_MAPS_API_KEY || '',
+          apiKey: googleMapsApiKey,
         },
       },
     },
